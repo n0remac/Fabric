@@ -1,0 +1,16 @@
+{
+  "fabric": "0.2",
+  "id": "stocks",
+  "title": "Markets",
+  "layout": {
+    "type": "column",
+    "id": "stock-watchlist",
+    "children": [
+      {"type": "text", "text": "MARKETS", "style": "heading"},
+      {"type": "divider"},
+      {"type": "text", "bind": "stocks.display_status", "style": "muted"},
+      {"type": "button", "id": "refresh", "label": "Refresh", "action": {"type": "refresh"}}
+    ]
+  },
+  "data": {"provider": "stocks", "refresh": {"strategy": "interval", "seconds": 60}}
+}

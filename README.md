@@ -12,7 +12,7 @@ go run ./cmd/fabricd -addr :8080 -pages ./pages
 
 Then open `http://localhost:8080/simulator/system`.
 
-Configuration is also available through `FABRIC_ADDR` and `FABRIC_PAGES_DIR`. In production, set `ENVIRONMENT=production` and a comma-separated `WEBSOCKET_ALLOWED_ORIGINS` value containing the public browser origin.
+Configuration is also available through `FABRIC_ADDR` and `FABRIC_PAGES_DIR`. Set `FABRIC_STOCK_TICKERS=AAPL,NVDA,GOOG,MSFT,VOO` to choose up to seven ticker symbols for the 800×480 stock watchlist; when unset, that list is the development default. In development, simulator WebSockets accept the same host used to open Fabric, including a Pi's Tailscale IP or hostname. In production, set `ENVIRONMENT=production` and a comma-separated `WEBSOCKET_ALLOWED_ORIGINS` value containing the exact browser origin (for example, `http://100.101.102.103:8080` or `https://pi.tailnet.ts.net`).
 
 The simulator's CSS, HTMX, and WebSocket-extension assets are embedded in the Go binary. It does not contact a CDN at runtime. Fabric Page JSON remains external on disk so pages can be added or changed without recompiling.
 
@@ -33,7 +33,9 @@ An action request identifies a component already declared by the page:
 
 Clients cannot submit executable code, action names, or action arguments. Only validated page actions and explicitly registered server-side invoke handlers can execute.
 
-The external JSON Schema is served at `/schemas/fabric-page-v0.1.json` and stored in `schemas/fabric-page-v0.1.json`.
+Page schemas are served at `/schemas/fabric-page-v0.1.json` and `/schemas/fabric-page-v0.2.json`. Version 0.2 adds `chart` and numeric formats. A chart binds to an array of objects and declares `x` and `y` field names; `y` must be numeric, while `x` must be numeric or an RFC3339 timestamp. The simulator plots these values on a monochrome line chart. The stock pages use 0.2, and existing 0.1 pages remain supported.
+
+Open `/simulator/stocks` for the stock watchlist. Market data is retrieved by `fabricd` from Yahoo Finance's chart endpoint. Quotes are cached for 45 seconds; chart history is cached for 3 or 30 minutes depending on period. When retrieval fails, the provider serves its last successful values with `stale` and `status` fields. The stock detail selection and period are shared process-wide across connected clients in this first version.
 
 ## Development checks
 

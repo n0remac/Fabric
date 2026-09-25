@@ -1,0 +1,41 @@
+{
+  "fabric": "0.2",
+  "id": "stock-detail",
+  "title": "Stock Detail",
+  "layout": {
+    "type": "column",
+    "id": "stock-detail",
+    "children": [
+      {"type": "row", "children": [
+        {"type": "text", "bind": "stocks.selected.symbol", "style": "heading"},
+        {"type": "text", "bind": "stocks.selected.period_label", "style": "muted"}
+      ]},
+      {"type": "row", "children": [
+        {"type": "metric", "label": "Price", "bind": "stocks.selected.price", "format": "currency"},
+        {"type": "metric", "label": "Change", "bind": "stocks.selected.change", "format": "signed"},
+        {"type": "metric", "label": "Daily", "bind": "stocks.selected.change_percent", "format": "percent"}
+      ]},
+      {"type": "chart", "bind": "stocks.selected.history", "x": "time", "y": "price"},
+      {"type": "row", "id": "stock-periods", "children": [
+        {"type": "button", "id": "period_1d", "label": "1D", "action": {"type": "invoke", "name": "stocks.period.1d"}},
+        {"type": "button", "id": "period_5d", "label": "5D", "action": {"type": "invoke", "name": "stocks.period.5d"}},
+        {"type": "button", "id": "period_1m", "label": "1M", "action": {"type": "invoke", "name": "stocks.period.1m"}},
+        {"type": "button", "id": "period_1y", "label": "1Y", "action": {"type": "invoke", "name": "stocks.period.1y"}}
+      ]},
+      {"type": "row", "children": [
+        {"type": "metric", "label": "Open", "bind": "stocks.selected.open", "format": "currency"},
+        {"type": "metric", "label": "High", "bind": "stocks.selected.high", "format": "currency"}
+      ]},
+      {"type": "row", "children": [
+        {"type": "metric", "label": "Low", "bind": "stocks.selected.low", "format": "currency"},
+        {"type": "metric", "label": "Volume", "bind": "stocks.selected.volume", "format": "compact"}
+      ]},
+      {"type": "text", "bind": "stocks.display_status", "style": "muted"},
+      {"type": "row", "children": [
+        {"type": "button", "id": "back", "label": "Back", "action": {"type": "navigate", "page": "stocks"}},
+        {"type": "button", "id": "refresh", "label": "Refresh", "action": {"type": "refresh"}}
+      ]}
+    ]
+  },
+  "data": {"provider": "stocks", "refresh": {"strategy": "interval", "seconds": 60}}
+}

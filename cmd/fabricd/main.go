@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
@@ -41,11 +42,40 @@ func run() error {
 	if err := providerRegistry.Register(providers.NewSystemProvider()); err != nil {
 		return err
 	}
+	symbols, err := providers.ParseStockTickers(os.Getenv("FABRIC_STOCK_TICKERS"))
+	if err != nil {
+		return err
+	}
+	stockProvider, err := providers.NewStockProvider(providers.NewYahooChartSource(), symbols)
+	if err != nil {
+		return err
+	}
+	if err := providerRegistry.Register(stockProvider); err != nil {
+		return err
+	}
+	if err := actionRegistry.RegisterResult("stocks.select", func(_ context.Context, args map[string]any) (string, error) {
+		symbol, ok := args["symbol"].(string)
+		if !ok {
+			return "", errors.New("stock selection requires a symbol")
+		}
+		if err := stockProvider.Select(symbol); err != nil {
+			return "", err
+		}
+		return "stock-detail", nil
+	}); err != nil {
+		return err
+	}
+	for _, period := range []providers.Period{providers.Period1D, providers.Period5D, providers.Period1M, providers.Period1Y} {
+		period := period
+		if err := actionRegistry.Register("stocks.period."+string(period), func(_ context.Context, _ map[string]any) error { return stockProvider.SetPeriod(period) }); err != nil {
+			return err
+		}
+	}
 	validator, err := fabric.NewValidator(actionRegistry, providerRegistry)
 	if err != nil {
 		return err
 	}
-	pageStore, err := pages.NewStore(*pagesDirectory, validator)
+	pageStore, err := pages.NewStore(*pagesDirectory, validator, pages.StockWatchlistTransform(symbols))
 	if err != nil {
 		return err
 	}
@@ -65,7 +95,11 @@ func run() error {
 	mux := http.NewServeMux()
 	(&api.Handler{Pages: pageStore, Providers: providerRegistry, Dispatcher: dispatcher}).Mount(mux)
 	(&simulator.Handler{Pages: pageStore, Providers: providerRegistry, Dispatcher: dispatcher, Renderer: renderer}).Mount(mux)
-	mux.Handle("GET /ws/hub", ws.Handler(hub, commandRegistry, ws.Hooks{}))
+	websocketHandler := ws.Handler(hub, commandRegistry, ws.Hooks{})
+	if os.Getenv("ENVIRONMENT") != "production" && len(splitList(os.Getenv("WEBSOCKET_ALLOWED_ORIGINS"))) == 0 {
+		websocketHandler = allowSameOriginWebSocket(websocketHandler, websocketConfig.AllowedOrigins[0])
+	}
+	mux.Handle("GET /ws/hub", websocketHandler)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte("{\"status\":\"ok\"}\n"))
@@ -78,7 +112,7 @@ func run() error {
 	defer cancel()
 	go hub.Run(ctx)
 	go pageStore.Watch(ctx, time.Second, func(err error) { log.Printf("page reload rejected; retaining last-known-good pages: %v", err) })
-	go simulator.BroadcastChanges(ctx, pageStore, providerRegistry, renderer, hub)
+	go simulator.BroadcastChanges(ctx, pageStore, providerRegistry, renderer, hub, stockProvider.Changes())
 
 	server := &http.Server{
 		Addr:              *address,
@@ -132,6 +166,32 @@ func websocketConfig(address string) (ws.Config, error) {
 	config.AllowedOrigins = origins
 	config.AllowMissingOrigin = true
 	return config, nil
+}
+
+// GoDom uses a fixed origin allowlist. For the default development setup,
+// admit a browser connecting back to the same host it used for the page (for
+// example, a Pi's Tailscale IP) before passing the request to that allowlist.
+func allowSameOriginWebSocket(next http.Handler, allowedOrigin string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sameOriginHost(r.Header.Get("Origin"), r.Host) {
+			request := r.Clone(r.Context())
+			request.Header.Set("Origin", allowedOrigin)
+			next.ServeHTTP(w, request)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func sameOriginHost(rawOrigin, requestHost string) bool {
+	if rawOrigin == "" || requestHost == "" {
+		return false
+	}
+	origin, err := url.Parse(rawOrigin)
+	if err != nil || (origin.Scheme != "http" && origin.Scheme != "https") || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+		return false
+	}
+	return strings.EqualFold(origin.Host, requestHost)
 }
 
 func splitList(value string) []string {

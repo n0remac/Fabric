@@ -61,10 +61,28 @@ func (d *Dispatcher) Dispatch(ctx context.Context, pageID, componentID string) (
 		if d.Actions == nil {
 			return Result{}, errors.New("action registry is unavailable")
 		}
-		if err := d.Actions.Invoke(ctx, action.Name, action.Args); err != nil {
+		target, err := d.Actions.InvokeResult(ctx, action.Name, action.Args)
+		if err != nil {
 			return Result{}, err
 		}
+		if target != "" {
+			targetPage, ok := d.Pages.Get(target)
+			if !ok {
+				return Result{}, fmt.Errorf("%w: %s", ErrPageNotFound, target)
+			}
+			data, err := pageData(ctx, targetPage, d.Providers)
+			if err != nil {
+				return Result{}, err
+			}
+			result.PageID, result.Data = target, data
+			return result, nil
+		}
 	case fabric.ActionRefresh:
+		if page.Data != nil {
+			if invalidator, ok := d.Providers.(interface{ Invalidate(string) }); ok {
+				invalidator.Invalidate(page.Data.Provider)
+			}
+		}
 	default:
 		return Result{}, fmt.Errorf("unsupported action type %q", action.Type)
 	}

@@ -43,6 +43,15 @@ func (r *Registry) Has(name string) bool {
 	return ok
 }
 
+func (r *Registry) Invalidate(name string) {
+	r.mu.RLock()
+	provider := r.providers[name]
+	r.mu.RUnlock()
+	if invalidator, ok := provider.(interface{ Invalidate() }); ok {
+		invalidator.Invalidate()
+	}
+}
+
 func (r *Registry) Data(ctx context.Context, name string) (map[string]any, error) {
 	r.mu.RLock()
 	provider, ok := r.providers[name]

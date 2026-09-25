@@ -11,35 +11,20 @@ import (
 	ws "github.com/n0remac/GoDom/websocket"
 )
 
-func BroadcastChanges(ctx context.Context, store *pages.Store, registry *providers.Registry, renderer *GoDomRenderer, hub *ws.Hub) {
+func BroadcastChanges(ctx context.Context, store *pages.Store, registry *providers.Registry, renderer *GoDomRenderer, hub *ws.Hub, updates ...<-chan string) {
+	var changes <-chan string
+	if len(updates) > 0 {
+		changes = updates[0]
+	}
 	for {
 		select {
 		case <-ctx.Done():
 			return
+		case id := <-changes:
+			broadcastPage(ctx, id, store, registry, renderer, hub)
 		case event := <-store.Events():
 			for _, id := range event.Changed {
-				page, ok := store.Get(id)
-				if !ok {
-					continue
-				}
-				data := map[string]any{}
-				if page.Data != nil {
-					var err error
-					data, err = registry.Data(ctx, page.Data.Provider)
-					if err != nil {
-						log.Printf("simulator broadcast provider failed for %s: %v", id, err)
-						continue
-					}
-				}
-				node, err := renderer.Render(page, data)
-				if err != nil {
-					log.Printf("simulator broadcast render failed for %s: %v", id, err)
-					continue
-				}
-				node.Init(html.Attr("hx-swap-oob", "outerHTML"))
-				if err := hub.BroadcastRoom(roomID(id), []byte(node.Render())); err != nil && !errors.Is(err, ws.ErrRoomNotFound) {
-					log.Printf("simulator broadcast failed for %s: %v", id, err)
-				}
+				broadcastPage(ctx, id, store, registry, renderer, hub)
 			}
 			for _, id := range event.Removed {
 				node := html.Div(
@@ -53,5 +38,30 @@ func BroadcastChanges(ctx context.Context, store *pages.Store, registry *provide
 				}
 			}
 		}
+	}
+}
+
+func broadcastPage(ctx context.Context, id string, store *pages.Store, registry *providers.Registry, renderer *GoDomRenderer, hub *ws.Hub) {
+	page, ok := store.Get(id)
+	if !ok {
+		return
+	}
+	data := map[string]any{}
+	if page.Data != nil {
+		var err error
+		data, err = registry.Data(ctx, page.Data.Provider)
+		if err != nil {
+			log.Printf("simulator broadcast provider failed for %s: %v", id, err)
+			return
+		}
+	}
+	node, err := renderer.Render(page, data)
+	if err != nil {
+		log.Printf("simulator broadcast render failed for %s: %v", id, err)
+		return
+	}
+	node.Init(html.Attr("hx-swap-oob", "outerHTML"))
+	if err := hub.BroadcastRoom(roomID(id), []byte(node.Render())); err != nil && !errors.Is(err, ws.ErrRoomNotFound) {
+		log.Printf("simulator broadcast failed for %s: %v", id, err)
 	}
 }

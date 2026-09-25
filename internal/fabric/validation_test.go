@@ -60,3 +60,22 @@ func TestValidatorSemanticErrors(t *testing.T) {
 		t.Fatalf("expected duplicate and action errors, got %+v", validation.Issues)
 	}
 }
+
+func TestChartRequiresDeclaredSeriesFieldsInV02(t *testing.T) {
+	validator, err := NewValidator(names{}, names{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := []byte(`{"fabric":"0.2","id":"chart","title":"Chart","layout":{"type":"chart","bind":"series","x":"time","y":"price"}}`)
+	if _, err := validator.Decode(valid); err != nil {
+		t.Fatalf("valid chart rejected: %v", err)
+	}
+	missingY := []byte(`{"fabric":"0.2","id":"chart","title":"Chart","layout":{"type":"chart","bind":"series","x":"time"}}`)
+	if _, err := validator.Decode(missingY); err == nil {
+		t.Fatal("chart without y accepted")
+	}
+	legacy := []byte(`{"fabric":"0.1","id":"chart","title":"Chart","layout":{"type":"chart","bind":"series","x":"time","y":"price"}}`)
+	if _, err := validator.Decode(legacy); err == nil {
+		t.Fatal("v0.1 unexpectedly accepted v0.2 chart fields")
+	}
+}

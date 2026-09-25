@@ -33,6 +33,7 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/pages/{id}/data", h.getData)
 	mux.HandleFunc("POST /api/pages/{id}/actions", h.postAction)
 	mux.HandleFunc("GET /schemas/fabric-page-v0.1.json", serveSchema)
+	mux.HandleFunc("GET /schemas/fabric-page-v0.2.json", serveSchemaV02)
 }
 
 func (h *Handler) listPages(w http.ResponseWriter, _ *http.Request) {
@@ -142,4 +143,10 @@ func serveSchema(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/schema+json; charset=utf-8")
 	w.Header().Set("Cache-Control", "public, max-age=3600")
 	http.ServeContent(w, r, "fabric-page-v0.1.json", time.Time{}, strings.NewReader(string(schemas.FabricPageV01)))
+}
+
+func serveSchemaV02(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/schema+json; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
+	http.ServeContent(w, r, "fabric-page-v0.2.json", time.Time{}, strings.NewReader(string(schemas.FabricPageV02)))
 }

@@ -39,26 +39,29 @@ func (e *ValidationError) Error() string {
 }
 
 type Validator struct {
-	schema    *jsonschema.Schema
+	schemas   map[string]*jsonschema.Schema
 	actions   RegistryLookup
 	providers RegistryLookup
 }
 
 func NewValidator(actions, providers RegistryLookup) (*Validator, error) {
-	document, err := jsonschema.UnmarshalJSON(bytes.NewReader(schemas.FabricPageV01))
-	if err != nil {
-		return nil, fmt.Errorf("decode embedded page schema: %w", err)
+	compiled := map[string]*jsonschema.Schema{}
+	for version, source := range map[string][]byte{"0.1": schemas.FabricPageV01, "0.2": schemas.FabricPageV02} {
+		document, err := jsonschema.UnmarshalJSON(bytes.NewReader(source))
+		if err != nil {
+			return nil, fmt.Errorf("decode embedded page schema %s: %w", version, err)
+		}
+		compiler := jsonschema.NewCompiler()
+		schemaURL := "https://fabric.local/schemas/fabric-page-v" + version + ".json"
+		if err := compiler.AddResource(schemaURL, document); err != nil {
+			return nil, fmt.Errorf("add page schema %s: %w", version, err)
+		}
+		compiled[version], err = compiler.Compile(schemaURL)
+		if err != nil {
+			return nil, fmt.Errorf("compile page schema %s: %w", version, err)
+		}
 	}
-	compiler := jsonschema.NewCompiler()
-	const schemaURL = "https://fabric.local/schemas/fabric-page-v0.1.json"
-	if err := compiler.AddResource(schemaURL, document); err != nil {
-		return nil, fmt.Errorf("add page schema: %w", err)
-	}
-	compiled, err := compiler.Compile(schemaURL)
-	if err != nil {
-		return nil, fmt.Errorf("compile page schema: %w", err)
-	}
-	return &Validator{schema: compiled, actions: actions, providers: providers}, nil
+	return &Validator{schemas: compiled, actions: actions, providers: providers}, nil
 }
 
 func (v *Validator) Decode(data []byte) (Page, error) {
@@ -66,7 +69,15 @@ func (v *Validator) Decode(data []byte) (Page, error) {
 	if err != nil {
 		return Page{}, &ValidationError{Issues: []ValidationIssue{{Path: "/", Code: "invalid_json", Message: err.Error()}}}
 	}
-	if err := v.schema.Validate(instance); err != nil {
+	version := ""
+	if object, ok := instance.(map[string]any); ok {
+		version, _ = object["fabric"].(string)
+	}
+	schema := v.schemas[version]
+	if schema == nil {
+		return Page{}, &ValidationError{Issues: []ValidationIssue{{Path: "/fabric", Code: "unsupported_version", Message: fmt.Sprintf("Fabric Page version %q is not supported", version)}}}
+	}
+	if err := schema.Validate(instance); err != nil {
 		return Page{}, schemaValidationError(err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(data))
@@ -131,7 +142,7 @@ func (v *Validator) validateSemantics(page Page) []ValidationIssue {
 func validateComponent(component Component, path string) []ValidationIssue {
 	var issues []ValidationIssue
 	hasChildren := len(component.Children) > 0
-	hasContent := component.Text != "" || component.Bind != "" || component.Label != "" || component.Style != "" || component.Format != "" || component.Suffix != "" || component.Action != nil
+	hasContent := component.Text != "" || component.Bind != "" || component.Label != "" || component.Style != "" || component.Format != "" || component.Suffix != "" || component.Action != nil || component.X != "" || component.Y != ""
 	problem := func(field, code, message string) {
 		issues = append(issues, ValidationIssue{Path: path + field, Code: code, Message: message})
 	}
@@ -181,6 +192,19 @@ func validateComponent(component Component, path string) []ValidationIssue {
 		if hasChildren || component.Text != "" || component.Bind != "" {
 			problem("", "invalid_fields", "button cannot define children, text, or bind")
 		}
+	case ComponentChart:
+		if component.Bind == "" || component.X == "" || component.Y == "" {
+			problem("", "required", "chart requires bind, x, and y")
+		}
+		if hasChildren || component.Action != nil || component.Text != "" || component.Label != "" || component.Style != "" || component.Format != "" || component.Suffix != "" {
+			problem("", "invalid_fields", "chart only supports bind, x, y, and id")
+		}
+		if err := ValidateBinding(component.X); err != nil {
+			problem("/x", "invalid_binding", err.Error())
+		}
+		if err := ValidateBinding(component.Y); err != nil {
+			problem("/y", "invalid_binding", err.Error())
+		}
 	default:
 		problem("/type", "unknown_component", fmt.Sprintf("component type %q is not registered", component.Type))
 	}
@@ -188,6 +212,9 @@ func validateComponent(component Component, path string) []ValidationIssue {
 		if err := ValidateBinding(component.Bind); err != nil {
 			problem("/bind", "invalid_binding", err.Error())
 		}
+	}
+	if component.Type != ComponentChart && (component.X != "" || component.Y != "") {
+		problem("", "invalid_fields", "x and y are only supported by chart")
 	}
 	return issues
 }

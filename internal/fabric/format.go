@@ -25,6 +25,33 @@ func FormatValue(value any, format ValueFormat, suffix string) (string, error) {
 			return "", fmt.Errorf("%w: duration requires non-negative seconds", ErrInvalidValue)
 		}
 		output = formatDuration(int64(seconds))
+	case FormatCurrency, FormatSigned, FormatPercent, FormatCompact:
+		number, ok := Number(value)
+		if !ok {
+			return "", fmt.Errorf("%w: numeric format requires a number", ErrInvalidValue)
+		}
+		switch format {
+		case FormatCurrency:
+			output = fmt.Sprintf("$%.2f", number)
+		case FormatSigned:
+			output = fmt.Sprintf("%+.2f", number)
+		case FormatPercent:
+			output = fmt.Sprintf("%+.2f%%", number)
+		case FormatCompact:
+			magnitude, unit := 1.0, ""
+			if math.Abs(number) >= 1e9 {
+				magnitude, unit = 1e9, "B"
+			} else if math.Abs(number) >= 1e6 {
+				magnitude, unit = 1e6, "M"
+			} else if math.Abs(number) >= 1e3 {
+				magnitude, unit = 1e3, "K"
+			}
+			if unit == "" {
+				output = fmt.Sprintf("%.0f", number)
+			} else {
+				output = fmt.Sprintf("%.1f%s", number/magnitude, unit)
+			}
+		}
 	default:
 		return "", fmt.Errorf("%w: unsupported format %q", ErrInvalidValue, format)
 	}

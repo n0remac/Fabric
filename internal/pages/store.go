@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -31,6 +32,7 @@ type Event struct {
 type Store struct {
 	directory string
 	validator *fabric.Validator
+	transform func(fabric.Page) (fabric.Page, error)
 
 	mu      sync.RWMutex
 	pages   map[string]fabric.Page
@@ -38,7 +40,7 @@ type Store struct {
 	events  chan Event
 }
 
-func NewStore(directory string, validator *fabric.Validator) (*Store, error) {
+func NewStore(directory string, validator *fabric.Validator, transforms ...func(fabric.Page) (fabric.Page, error)) (*Store, error) {
 	if validator == nil {
 		return nil, errors.New("page validator is required")
 	}
@@ -48,6 +50,12 @@ func NewStore(directory string, validator *fabric.Validator) (*Store, error) {
 		pages:     make(map[string]fabric.Page),
 		digests:   make(map[string][sha256.Size]byte),
 		events:    make(chan Event, 16),
+	}
+	if len(transforms) > 1 {
+		return nil, errors.New("only one page transform is supported")
+	}
+	if len(transforms) == 1 {
+		store.transform = transforms[0]
 	}
 	if _, err := store.Reload(); err != nil {
 		return nil, err
@@ -78,7 +86,7 @@ func (s *Store) List() []Summary {
 func (s *Store) Events() <-chan Event { return s.events }
 
 func (s *Store) Reload() (Event, error) {
-	loaded, digests, err := loadDirectory(s.directory, s.validator)
+	loaded, digests, err := loadDirectory(s.directory, s.validator, s.transform)
 	if err != nil {
 		return Event{}, err
 	}
@@ -120,7 +128,7 @@ func (s *Store) Watch(ctx context.Context, interval time.Duration, onError func(
 	}
 }
 
-func loadDirectory(directory string, validator *fabric.Validator) (map[string]fabric.Page, map[string][sha256.Size]byte, error) {
+func loadDirectory(directory string, validator *fabric.Validator, transforms ...func(fabric.Page) (fabric.Page, error)) (map[string]fabric.Page, map[string][sha256.Size]byte, error) {
 	entries, err := os.ReadDir(directory)
 	if err != nil {
 		return nil, nil, fmt.Errorf("read pages directory %s: %w", directory, err)
@@ -152,6 +160,23 @@ func loadDirectory(directory string, validator *fabric.Validator) (map[string]fa
 		if err != nil {
 			loadErrors = append(loadErrors, fmt.Errorf("%s: %w", path, err))
 			continue
+		}
+		if len(transforms) > 0 && transforms[0] != nil {
+			page, err = transforms[0](page)
+			if err != nil {
+				loadErrors = append(loadErrors, fmt.Errorf("%s: transform: %w", path, err))
+				continue
+			}
+			encoded, err := json.Marshal(page)
+			if err != nil {
+				loadErrors = append(loadErrors, fmt.Errorf("%s: encode transformed page: %w", path, err))
+				continue
+			}
+			page, err = validator.Decode(encoded)
+			if err != nil {
+				loadErrors = append(loadErrors, fmt.Errorf("%s: validate transformed page: %w", path, err))
+				continue
+			}
 		}
 		filenameID := strings.TrimSuffix(entry.Name(), filepath.Ext(entry.Name()))
 		if filenameID != page.ID {

@@ -12,11 +12,12 @@ const (
 	ComponentList     ComponentType = "list"
 	ComponentProgress ComponentType = "progress"
 	ComponentButton   ComponentType = "button"
+	ComponentChart    ComponentType = "chart"
 )
 
 var ComponentTypes = []ComponentType{
 	ComponentColumn, ComponentRow, ComponentCard, ComponentText, ComponentMetric,
-	ComponentDivider, ComponentList, ComponentProgress, ComponentButton,
+	ComponentDivider, ComponentList, ComponentProgress, ComponentButton, ComponentChart,
 }
 
 type StyleToken string
@@ -34,6 +35,10 @@ type ValueFormat string
 const (
 	FormatPlain    ValueFormat = "plain"
 	FormatDuration ValueFormat = "duration"
+	FormatCurrency ValueFormat = "currency"
+	FormatSigned   ValueFormat = "signed"
+	FormatPercent  ValueFormat = "percent"
+	FormatCompact  ValueFormat = "compact"
 )
 
 type Component struct {
@@ -42,6 +47,8 @@ type Component struct {
 	Label    string        `json:"label,omitempty"`
 	Text     string        `json:"text,omitempty"`
 	Bind     string        `json:"bind,omitempty"`
+	X        string        `json:"x,omitempty"`
+	Y        string        `json:"y,omitempty"`
 	Style    StyleToken    `json:"style,omitempty"`
 	Format   ValueFormat   `json:"format,omitempty"`
 	Suffix   string        `json:"suffix,omitempty"`

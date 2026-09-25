@@ -85,6 +85,10 @@ func (h *Handler) action(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), status)
 		return
 	}
+	if result.PageID != "" && result.PageID != pageID {
+		h.redirect(w, r, "/simulator/"+result.PageID)
+		return
+	}
 	switch result.Type {
 	case fabric.ActionNavigate:
 		h.redirect(w, r, "/simulator/"+result.PageID)

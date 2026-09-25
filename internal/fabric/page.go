@@ -1,6 +1,6 @@
 package fabric
 
-const ProtocolVersion = "0.1"
+const ProtocolVersion = "0.2"
 
 type Page struct {
 	Fabric string    `json:"fabric"`

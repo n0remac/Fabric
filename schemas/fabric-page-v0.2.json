@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://fabric.local/schemas/fabric-page-v0.2.json",
+  "title": "Fabric Page v0.2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["fabric", "id", "title", "layout"],
+  "properties": {
+    "fabric": {"const": "0.2"},
+    "id": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"},
+    "title": {"type": "string", "minLength": 1, "maxLength": 128},
+    "layout": {"$ref": "#/$defs/component"},
+    "data": {"$ref": "#/$defs/data"}
+  },
+  "$defs": {
+    "data": {
+      "type": "object", "additionalProperties": false, "required": ["provider", "refresh"],
+      "properties": {
+        "provider": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,63}$"},
+        "refresh": {"$ref": "#/$defs/refresh"}
+      }
+    },
+    "refresh": {
+      "type": "object", "additionalProperties": false, "required": ["strategy"],
+      "properties": {
+        "strategy": {"enum": ["manual", "on-open", "interval"]},
+        "seconds": {"type": "integer", "minimum": 1, "maximum": 86400}
+      },
+      "allOf": [{"if": {"properties": {"strategy": {"const": "interval"}}}, "then": {"required": ["seconds"]}, "else": {"not": {"required": ["seconds"]}}}]
+    },
+    "action": {
+      "oneOf": [
+        {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "refresh"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "page"], "properties": {"type": {"const": "navigate"}, "page": {"type": "string", "pattern": "^[a-z][a-z0-9_-]{0,63}$"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type"], "properties": {"type": {"const": "back"}}},
+        {"type": "object", "additionalProperties": false, "required": ["type", "name"], "properties": {"type": {"const": "invoke"}, "name": {"type": "string", "pattern": "^[a-z][a-z0-9._-]{0,127}$"}, "args": {"type": "object", "maxProperties": 32, "additionalProperties": true}}}
+      ]
+    },
+    "component": {
+      "type": "object", "additionalProperties": false, "required": ["type"],
+      "properties": {
+        "type": {"enum": ["column", "row", "card", "text", "metric", "divider", "list", "progress", "button", "chart"]},
+        "id": {"type": "string", "pattern": "^[A-Za-z][A-Za-z0-9_-]{0,63}$"},
+        "label": {"type": "string", "maxLength": 256},
+        "text": {"type": "string", "maxLength": 4096},
+        "bind": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$", "maxLength": 256},
+        "x": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$", "maxLength": 256},
+        "y": {"type": "string", "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(\\.[A-Za-z_][A-Za-z0-9_-]*)*$", "maxLength": 256},
+        "style": {"enum": ["heading", "subheading", "body", "muted", "emphasis"]},
+        "format": {"enum": ["plain", "duration", "currency", "signed", "percent", "compact"]},
+        "suffix": {"type": "string", "maxLength": 32},
+        "children": {"type": "array", "maxItems": 128, "items": {"$ref": "#/$defs/component"}},
+        "action": {"$ref": "#/$defs/action"}
+      }
+    }
+  }
+}

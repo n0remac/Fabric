@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"math"
 	"reflect"
+	"sort"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/n0remac/Fabric/internal/fabric"
 	html "github.com/n0remac/GoDom/html"
@@ -33,7 +36,106 @@ func NewGoDomRenderer() *GoDomRenderer {
 	mustRegister(fabric.ComponentList, renderer.renderList)
 	mustRegister(fabric.ComponentProgress, renderer.renderProgress)
 	mustRegister(fabric.ComponentButton, renderer.renderButton)
+	mustRegister(fabric.ComponentChart, renderer.renderChart)
 	return renderer
+}
+
+// Charts accept an array of objects. X is a number or RFC3339 timestamp; Y is
+// numeric. Coordinates are derived from those values rather than raster images.
+func (r *GoDomRenderer) renderChart(_ fabric.Page, component fabric.Component, data map[string]any) (*html.Node, error) {
+	value, err := fabric.ResolveBinding(data, component.Bind)
+	type sample struct{ x, y float64 }
+	var values []sample
+	if err == nil {
+		series := reflect.ValueOf(value)
+		if series.IsValid() && (series.Kind() == reflect.Slice || series.Kind() == reflect.Array) {
+			for i := 0; i < series.Len(); i++ {
+				item := series.Index(i).Interface()
+				x, validX := chartX(chartField(item, component.X))
+				y, validY := fabric.Number(chartField(item, component.Y))
+				if validX && validY {
+					values = append(values, sample{x, y})
+				}
+			}
+		}
+	}
+	if len(values) == 0 {
+		return html.Div(html.Class("fabric-chart fabric-chart--empty"), html.Text("Chart unavailable")), nil
+	}
+	sort.SliceStable(values, func(i, j int) bool { return values[i].x < values[j].x })
+	minX, maxX, minY, maxY := values[0].x, values[len(values)-1].x, values[0].y, values[0].y
+	for _, point := range values {
+		if point.y < minY {
+			minY = point.y
+		}
+		if point.y > maxY {
+			maxY = point.y
+		}
+	}
+	spanX, spanY := maxX-minX, maxY-minY
+	var path strings.Builder
+	for i, point := range values {
+		x := 320.0
+		if spanX > 0 {
+			x = 8 + (point.x-minX)/spanX*624
+		}
+		y := 90.0
+		if spanY > 0 {
+			y = 172 - (point.y-minY)/spanY*164
+		}
+		if i == 0 {
+			path.WriteByte('M')
+		} else {
+			path.WriteByte('L')
+		}
+		path.WriteString(fmt.Sprintf("%.1f %.1f", x, y))
+	}
+	return html.Div(html.Class("fabric-chart"), html.Svg(
+		html.Attr("viewBox", "0 0 640 180"),
+		html.Attr("role", "img"),
+		html.Attr("aria-label", fmt.Sprintf("Line chart with %d samples", len(values))),
+		html.Path(html.Attr("d", path.String()), html.Attr("fill", "none"), html.Attr("stroke", "currentColor"), html.Attr("stroke-width", "3")),
+	)), nil
+}
+
+func chartX(value any) (float64, bool) {
+	if numeric, ok := fabric.Number(value); ok {
+		return numeric, true
+	}
+	if timestamp, ok := value.(time.Time); ok {
+		return float64(timestamp.Unix()), !timestamp.IsZero()
+	}
+	if text, ok := value.(string); ok {
+		if timestamp, err := time.Parse(time.RFC3339Nano, text); err == nil {
+			return float64(timestamp.UnixNano()) / 1e9, true
+		}
+	}
+	return 0, false
+}
+
+func chartField(item any, field string) any {
+	value := reflect.ValueOf(item)
+	if !value.IsValid() {
+		return nil
+	}
+	if value.Kind() == reflect.Map {
+		if value.Type().Key().Kind() != reflect.String {
+			return nil
+		}
+		entry := value.MapIndex(reflect.ValueOf(field))
+		if entry.IsValid() {
+			return entry.Interface()
+		}
+	}
+	if value.Kind() == reflect.Struct {
+		for i := 0; i < value.NumField(); i++ {
+			name := strings.Split(value.Type().Field(i).Tag.Get("json"), ",")[0]
+			if name == field && value.Field(i).CanInterface() {
+				return value.Field(i).Interface()
+			}
+		}
+	}
+	return nil
 }
 
 func (r *GoDomRenderer) Register(componentType fabric.ComponentType, render ComponentRenderer) error {
