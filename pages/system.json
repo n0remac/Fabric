@@ -1,0 +1,56 @@
+{
+  "fabric": "0.1",
+  "id": "system",
+  "title": "System",
+  "layout": {
+    "type": "column",
+    "children": [
+      {
+        "type": "text",
+        "text": "Raspberry Pi",
+        "style": "heading"
+      },
+      {
+        "type": "divider"
+      },
+      {
+        "type": "metric",
+        "label": "CPU",
+        "bind": "system.cpu",
+        "suffix": "%"
+      },
+      {
+        "type": "progress",
+        "label": "Memory",
+        "bind": "system.memory",
+        "suffix": "%"
+      },
+      {
+        "type": "metric",
+        "label": "Disk",
+        "bind": "system.disk",
+        "suffix": "%"
+      },
+      {
+        "type": "metric",
+        "label": "Uptime",
+        "bind": "system.uptime",
+        "format": "duration"
+      },
+      {
+        "type": "button",
+        "id": "refresh",
+        "label": "Refresh",
+        "action": {
+          "type": "refresh"
+        }
+      }
+    ]
+  },
+  "data": {
+    "provider": "system",
+    "refresh": {
+      "strategy": "manual"
+    }
+  }
+}
