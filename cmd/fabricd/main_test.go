@@ -1,10 +1,41 @@
 package main
 
 import (
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"testing"
 )
+
+func TestServerURLs(t *testing.T) {
+	var addresses []net.Addr
+	for _, cidr := range []string{"127.0.0.1/8", "192.168.1.42/24", "100.101.102.103/32", "192.168.1.42/24", "fd00::42/64", "fe80::42/64", "::1/128"} {
+		ip, network, err := net.ParseCIDR(cidr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		network.IP = ip
+		addresses = append(addresses, network)
+	}
+	for _, test := range []struct {
+		address string
+		want    []string
+	}{
+		{":8080", []string{"http://127.0.0.1:8080", "http://192.168.1.42:8080", "http://100.101.102.103:8080", "http://[fd00::42]:8080"}},
+		{"[::]:9090", []string{"http://127.0.0.1:9090", "http://192.168.1.42:9090", "http://100.101.102.103:9090", "http://[fd00::42]:9090"}},
+		{"0.0.0.0:8080", []string{"http://127.0.0.1:8080", "http://192.168.1.42:8080", "http://100.101.102.103:8080"}},
+		{"127.0.0.1:8080", []string{"http://127.0.0.1:8080"}},
+		{"192.168.1.42:9090", []string{"http://192.168.1.42:9090"}},
+		{"[fd00::42]:8080", []string{"http://[fd00::42]:8080"}},
+	} {
+		t.Run(test.address, func(t *testing.T) {
+			if got := serverURLs(test.address, addresses); !reflect.DeepEqual(got, test.want) {
+				t.Fatalf("got %v, want %v", got, test.want)
+			}
+		})
+	}
+}
 
 func TestWebsocketConfig(t *testing.T) {
 	t.Setenv("ENVIRONMENT", "development")

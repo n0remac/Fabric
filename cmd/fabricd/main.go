@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -121,9 +122,21 @@ func run() error {
 		IdleTimeout:       60 * time.Second,
 	}
 	serverErrors := make(chan error, 1)
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return err
+	}
+	defer listener.Close()
+	interfaceAddresses, err := net.InterfaceAddrs()
+	if err != nil {
+		log.Printf("could not discover server IP addresses: %v", err)
+	}
+	log.Printf("Fabric listening on %s with pages from %s", listener.Addr(), pageStore.Directory())
+	for _, serverURL := range serverURLs(listener.Addr().String(), interfaceAddresses) {
+		log.Printf("Fabric available at %s", serverURL)
+	}
 	go func() {
-		log.Printf("Fabric listening on %s with pages from %s", *address, pageStore.Directory())
-		serverErrors <- server.ListenAndServe()
+		serverErrors <- server.Serve(listener)
 	}()
 
 	select {
@@ -137,6 +150,37 @@ func run() error {
 		}
 		return err
 	}
+}
+
+func serverURLs(address string, interfaceAddresses []net.Addr) []string {
+	host, port, err := net.SplitHostPort(address)
+	if err != nil {
+		return nil
+	}
+	ip := net.ParseIP(host)
+	if host != "" && (ip == nil || !ip.IsUnspecified()) {
+		return []string{"http://" + net.JoinHostPort(host, port)}
+	}
+	hosts := []string{"127.0.0.1"}
+	seen := map[string]bool{"127.0.0.1": true}
+	for _, address := range interfaceAddresses {
+		ip, _, err := net.ParseCIDR(address.String())
+		if err != nil || !ip.IsGlobalUnicast() {
+			continue
+		}
+		if host == "0.0.0.0" && ip.To4() == nil {
+			continue
+		}
+		if value := ip.String(); !seen[value] {
+			seen[value] = true
+			hosts = append(hosts, value)
+		}
+	}
+	urls := make([]string, 0, len(hosts))
+	for _, host := range hosts {
+		urls = append(urls, "http://"+net.JoinHostPort(host, port))
+	}
+	return urls
 }
 
 func websocketConfig(address string) (ws.Config, error) {

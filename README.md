@@ -12,6 +12,8 @@ go run ./cmd/fabricd -addr :8080 -pages ./pages
 
 Then open `http://localhost:8080/simulator/system`.
 
+Startup prints the server's browser URLs, including its LAN and Tailscale IP addresses when listening on all interfaces. Use one of those URLs to open Fabric from another device.
+
 Configuration is also available through `FABRIC_ADDR` and `FABRIC_PAGES_DIR`. Set `FABRIC_STOCK_TICKERS=AAPL,NVDA,GOOG,MSFT,VOO` to choose up to seven ticker symbols for the 800×480 stock watchlist; when unset, that list is the development default. In development, simulator WebSockets accept the same host used to open Fabric, including a Pi's Tailscale IP or hostname. In production, set `ENVIRONMENT=production` and a comma-separated `WEBSOCKET_ALLOWED_ORIGINS` value containing the exact browser origin (for example, `http://100.101.102.103:8080` or `https://pi.tailnet.ts.net`).
 
 The simulator's CSS, HTMX, and WebSocket-extension assets are embedded in the Go binary. It does not contact a CDN at runtime. Fabric Page JSON remains external on disk so pages can be added or changed without recompiling.
