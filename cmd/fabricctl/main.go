@@ -32,6 +32,9 @@ func run(args []string) error {
 		return errors.New("usage: fabricctl token-issue|token-revoke|upload|promote [options]")
 	}
 	command := args[0]
+	if command == "node" {
+		return runNode(args[1:])
+	}
 	flags := flag.NewFlagSet(command, flag.ContinueOnError)
 	if command == "token-issue" || command == "token-revoke" {
 		config := flags.String("config", "/etc/fabric/firmware-access.json", "Credential configuration")

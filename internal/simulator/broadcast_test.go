@@ -75,8 +75,17 @@ func TestPageChangeBroadcastsRenderedOOBFragment(t *testing.T) {
 	}
 	defer connection.Close()
 
-	go store.Watch(ctx, 10*time.Millisecond, func(err error) { t.Errorf("watch: %v", err) })
-	go BroadcastChanges(ctx, store, providerRegistry, NewGoDomRenderer(), hub)
+	watchDone := make(chan struct{})
+	broadcastDone := make(chan struct{})
+	go func() {
+		defer close(watchDone)
+		store.Watch(ctx, 10*time.Millisecond, func(err error) { t.Errorf("watch: %v", err) })
+	}()
+	go func() {
+		defer close(broadcastDone)
+		BroadcastChanges(ctx, store, providerRegistry, NewGoDomRenderer(), hub)
+	}()
+	defer func() { cancel(); <-watchDone; <-broadcastDone }()
 	writeBroadcastPage(t, pagePath, "After")
 
 	_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
@@ -97,7 +106,10 @@ func writeBroadcastPage(t *testing.T, path, text string) {
       "layout":{"type":"text","text":"` + text + `"},
       "data":{"provider":"system","refresh":{"strategy":"manual"}}
     }`
-	if err := os.WriteFile(path, []byte(document), 0600); err != nil {
+	if err := os.WriteFile(path+".tmp", []byte(document), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Rename(path+".tmp", path); err != nil {
 		t.Fatal(err)
 	}
 }

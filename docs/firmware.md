@@ -27,8 +27,8 @@ go build -o deploy/bin/fabricctl ./cmd/fabricctl
 sudo bash deploy/install.sh
 ```
 
-The installer creates the `fabric` system user, installs both binaries, copies
-pages into `/etc/fabric/pages`, and enables `fabricd.service`. It uses
+The installer creates the `fabric` system user, installs both binaries, replaces
+the managed pages in `/etc/fabric/pages`, and enables `fabricd.service`. It uses
 `deploy/fabric.env` only when `/etc/fabric/fabric.env` does not yet exist.
 Configuration stays external to the binaries. Subsequent installation preserves
 firmware and credentials, replaces the installed binaries and page files, and
@@ -41,19 +41,22 @@ trying to serve the same Funnel target.
 
 The service binds to `127.0.0.1:8080`. This Pi's existing Tailscale Funnel proxies
 `https://raspberrypi.tail628049.ts.net` to that address. The installer does not
-change Tailscale configuration. Requests arriving through Funnel require the
-same firmware credentials as loopback requests. Existing page APIs are unchanged.
+change Tailscale configuration. All page, action, simulator, and firmware
+requests require a node credential through either transport. `/healthz` stays
+public. See [node identity](nodes.md) for the registry and migration.
 
 On first installation, two random tokens are written into private files:
 
 - `/home/pi/.config/fabric/publisher.token`: upload, promotion and read access.
 - `/home/pi/.config/fabric/x3.token`: read-only access for the first X3.
 
-The installer never prints tokens. The server stores only SHA256 token digests,
-roles, identities and device scopes in `/etc/fabric/firmware-access.json`.
-Configuration is root-owned and group-readable by `fabric`; token files are
-operator-owned and mode 0600. Firmware credentials are unrelated to Tailscale
-credentials. Additional X3 devices should each receive their own token.
+The installer never prints tokens. On first node-registry installation it
+imports the digests of the existing X3 and publisher tokens into
+`/etc/fabric/nodes.json`, and creates a separate simulator-browser token.
+`firmware-access.json` remains only as an offline migration source. Registry
+configuration is root-owned and group-readable by `fabric`; token files are
+operator-owned and mode 0600. Additional X3 devices should each receive their
+own node credential.
 
 ```bash
 sudo systemctl status fabricd --no-pager
@@ -62,11 +65,11 @@ tailscale funnel status
 curl --fail https://raspberrypi.tail628049.ts.net/healthz
 ```
 
-For manual development, firmware is disabled unless both `FABRIC_FIRMWARE_DIR`
-and `FABRIC_FIRMWARE_ACCESS_FILE` are configured (or `-firmware` and
-`-firmware-access` are passed). Missing or invalid credentials fail startup;
-there is no unauthenticated firmware mode. A second process cannot write the
-same registry while the service is running.
+For manual development, `FABRIC_NODES_FILE` is required for all API endpoints.
+Firmware storage is enabled by `FABRIC_FIRMWARE_DIR` or `-firmware`; when
+enabled, it uses the same node identity and capability checks as page APIs.
+A second process cannot write the same firmware registry while the service is
+running.
 
 ## Publish and promote
 
@@ -145,30 +148,12 @@ PY
 
 ## Provision and revoke devices
 
-Issue a separate token into a new private file; raw tokens cannot be recovered
-from the digest configuration:
-
-```bash
-sudo fabricctl token-issue --id x3-travel --role reader \
-  --output /home/pi/.config/fabric/x3-travel.token
-sudo chown pi:pi /home/pi/.config/fabric/x3-travel.token
-sudo systemctl restart fabricd
-```
-
-To rotate, issue a new identity, provision the new token, then revoke the old
-identity. The token file must not already exist. Changes preserve configuration
-ownership and are atomically saved. The last credential cannot be revoked;
-issue its replacement first.
-
-```bash
-sudo fabricctl token-revoke --id x3-travel
-sudo systemctl restart fabricd
-```
-
-Revocation removes the server digest; deleting a device token file alone does
-not revoke it. Credentials are read on startup. Store the raw reader token in
-that device's settings when the separate CrossPoint OTA integration is added;
-never embed publisher tokens in firmware or Git.
+Use `fabricctl node create`, `node disable`, and `node revoke` for active
+credentials. Each node receives a unique token and its own `firmware.read` or
+`firmware.publish` permission. Existing firmware token digests are imported
+without touching the X3's NVS token. See [node identity](nodes.md) for commands,
+the browser simulator credential, and restart requirements. The legacy
+`fabricctl token-issue`/`token-revoke` commands no longer change `fabricd` access.
 
 ## Recovery and verification
 
@@ -214,12 +199,13 @@ builds the combined X3/X4 application. This Pi's gitignored
 was copied into the first X3's NVS by a USB bootstrap image; the provisioning
 header was removed before the registry image was built.
 
-The firmware updater checks Fabric's dev channel when a compiled HTTPS origin
-is present. It uses a separate certificate-verified client, bearer token, size
-and SHA256 validation, and the existing inactive-partition OTA writer. The
-normal Fabric page client remains unauthenticated and still needs certificate
-verification before it can send commands or credentials safely. See the fork's
-`docs/fabric-client.md` for device behavior and the first USB bootstrap flow.
+The firmware updater checks Fabric's dev channel on the combined X3/X4 ESP32-C3
+build when a compiled HTTPS origin is present. It uses a separate
+certificate-verified client, bearer token, size and SHA256 validation, and the
+existing inactive-partition OTA writer. The normal Fabric page client also sends
+the NVS reader token and verifies HTTPS certificates and hostnames. See the
+fork's `docs/fabric-client.md` for device behavior and the first USB bootstrap
+flow.
 
 Publish a token-free development build with `pio run -e default -t fabric-deploy`
 from the CrossPoint checkout. The target uses the local publisher credential,
@@ -230,8 +216,9 @@ the immutable registry. The first test build has ID
 The public HTTPS endpoint returned 401 without a credential and served bytes
 matching the local build to an authenticated reader.
 
-The remaining acceptance test is on the X3 itself: select **Settings → Update
-Firmware**, install the offered dev build, then check **About → Fabric Build ID**
-for prefix `e5443637397b`. Keep the first test build on dev until that succeeds.
+The X3 acceptance run should open Fabric pages and invoke an action, then select
+**Settings → Update Firmware**, install an offered dev build, and check **About →
+Fabric Build ID** for the installed build. Verify the page and OTA requests work
+with the same NVS credential before promotion.
 Stable-channel selection, signed manifests, rollback automation, and automatic
 retention are future work.

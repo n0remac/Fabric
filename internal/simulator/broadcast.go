@@ -46,6 +46,11 @@ func broadcastPage(ctx context.Context, id string, store *pages.Store, registry 
 	if !ok {
 		return
 	}
+	// A room is shared by browser nodes. Never broadcast data derived from a
+	// node-scoped provider using the background task's identity.
+	if page.Data != nil && registry.NodeScoped(page.Data.Provider) {
+		return
+	}
 	data := map[string]any{}
 	if page.Data != nil {
 		var err error

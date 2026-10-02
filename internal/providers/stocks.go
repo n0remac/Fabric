@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/n0remac/Fabric/internal/nodes"
 	"math"
 	"regexp"
 	"strings"
@@ -82,8 +83,7 @@ type StockProvider struct {
 	source         MarketDataSource
 	symbols        []string
 	allowed        map[string]bool
-	selected       string
-	period         Period
+	state          *nodes.State
 	quotes         map[string]Quote
 	quoteFetched   time.Time
 	quoteAttempted time.Time
@@ -107,10 +107,34 @@ func NewStockProvider(source MarketDataSource, symbols []string) (*StockProvider
 		}
 		allowed[symbol] = true
 	}
-	return &StockProvider{source: source, symbols: append([]string(nil), symbols...), allowed: allowed, selected: symbols[0], period: Period1D, history: map[string]historyCache{}, now: time.Now, changes: make(chan string, 1)}, nil
+	return &StockProvider{source: source, symbols: append([]string(nil), symbols...), allowed: allowed, state: nodes.NewState(), history: map[string]historyCache{}, now: time.Now, changes: make(chan string, 1)}, nil
+}
+
+type selection struct {
+	symbol string
+	period Period
+}
+
+func (p *StockProvider) selection(ctx context.Context) selection {
+	id := "local"
+	if n, ok := nodes.FromContext(ctx); ok {
+		id = n.NodeID
+	}
+	if value, ok := p.state.Get(id, "stocks", "selection"); ok {
+		return value.(selection)
+	}
+	return selection{symbol: p.symbols[0], period: Period1D}
+}
+func (p *StockProvider) setSelection(ctx context.Context, value selection) {
+	id := "local"
+	if n, ok := nodes.FromContext(ctx); ok {
+		id = n.NodeID
+	}
+	p.state.Set(id, "stocks", "selection", value)
 }
 
 func (p *StockProvider) Name() string           { return "stocks" }
+func (p *StockProvider) NodeScoped() bool       { return true }
 func (p *StockProvider) Symbols() []string      { return append([]string(nil), p.symbols...) }
 func (p *StockProvider) Changes() <-chan string { return p.changes }
 
@@ -121,34 +145,41 @@ func (p *StockProvider) signal() {
 	}
 }
 
-func (p *StockProvider) Select(symbol string) error {
+func (p *StockProvider) Select(symbol string) error { return p.SelectFor(context.Background(), symbol) }
+func (p *StockProvider) SelectFor(ctx context.Context, symbol string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	if !p.allowed[symbol] {
 		return fmt.Errorf("ticker %q is not in the watchlist", symbol)
 	}
-	p.selected = symbol
-	p.period = Period1D
+	p.setSelection(ctx, selection{symbol: symbol, period: Period1D})
 	p.signal()
 	return nil
 }
 
 func (p *StockProvider) SetPeriod(period Period) error {
+	return p.SetPeriodFor(context.Background(), period)
+}
+func (p *StockProvider) SetPeriodFor(ctx context.Context, period Period) error {
 	if !ValidPeriod(period) {
 		return fmt.Errorf("invalid chart period %q", period)
 	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	p.period = period
+	current := p.selection(ctx)
+	current.period = period
+	p.setSelection(ctx, current)
 	p.signal()
 	return nil
 }
 
-func (p *StockProvider) Invalidate() {
+func (p *StockProvider) Invalidate() { p.InvalidateFor(context.Background()) }
+func (p *StockProvider) InvalidateFor(ctx context.Context) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.quoteAttempted = time.Time{}
-	key := p.selected + ":" + string(p.period)
+	current := p.selection(ctx)
+	key := current.symbol + ":" + string(current.period)
 	entry := p.history[key]
 	entry.attempted = time.Time{}
 	p.history[key] = entry
@@ -157,6 +188,7 @@ func (p *StockProvider) Invalidate() {
 func (p *StockProvider) Data(ctx context.Context) (map[string]any, error) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	current := p.selection(ctx)
 	now := p.now()
 	if p.quoteAttempted.IsZero() || now.Sub(p.quoteAttempted) >= 45*time.Second {
 		p.quoteAttempted = now
@@ -190,22 +222,22 @@ func (p *StockProvider) Data(ctx context.Context) (map[string]any, error) {
 			items[symbol] = quoteData(quote)
 		}
 	}
-	selected := map[string]any{"symbol": p.selected, "period": string(p.period), "history": []PricePoint{}, "status": status, "stale": status != "fresh"}
-	selected["period_label"] = strings.ToUpper(string(p.period))
-	if quote, ok := p.quotes[p.selected]; ok {
+	selected := map[string]any{"symbol": current.symbol, "period": string(current.period), "history": []PricePoint{}, "status": status, "stale": status != "fresh"}
+	selected["period_label"] = strings.ToUpper(string(current.period))
+	if quote, ok := p.quotes[current.symbol]; ok {
 		for key, value := range quoteData(quote) {
 			selected[key] = value
 		}
 	}
-	key := p.selected + ":" + string(p.period)
+	key := current.symbol + ":" + string(current.period)
 	entry := p.history[key]
 	ttl := 3 * time.Minute
-	if p.period == Period1M || p.period == Period1Y {
+	if current.period == Period1M || current.period == Period1Y {
 		ttl = 30 * time.Minute
 	}
 	if entry.attempted.IsZero() || now.Sub(entry.attempted) >= ttl {
 		entry.attempted = now
-		points, err := p.source.History(ctx, p.selected, p.period)
+		points, err := p.source.History(ctx, current.symbol, current.period)
 		if err == nil && len(points) > 0 {
 			valid := make([]PricePoint, 0, len(points))
 			for _, point := range points {

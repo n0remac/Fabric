@@ -17,6 +17,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/n0remac/Fabric/internal/auth"
+	"github.com/n0remac/Fabric/internal/nodes"
 )
 
 func imageFixture(tag string, chip uint16, appended bool) []byte {
@@ -327,8 +330,26 @@ func TestFirmwareAPI(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer s.Close()
+	registry, err := nodes.Open(filepath.Join(t.TempDir(), "nodes.json"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	readerToken, readerDigest, err := nodes.RandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	publisherToken, publisherDigest, err := nodes.RandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Add(nodes.Node{ID: "x3-personal", Type: "xteink-x3", Name: "Reader", Enabled: true, Permissions: []string{"firmware.read"}}, readerDigest); err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Add(nodes.Node{ID: "pi-home", Type: "raspberry-pi", Name: "Publisher", Enabled: true, Permissions: []string{"firmware.read", "firmware.publish"}}, publisherDigest); err != nil {
+		t.Fatal(err)
+	}
 	mux := http.NewServeMux()
-	(&Handler{Store: s, Access: testAccess()}).Mount(mux)
+	(&Handler{Store: s, Auth: &auth.Middleware{Registry: registry}}).Mount(mux)
 	for _, path := range []string{"/x3/manifest", "/x3/latest", "/x3/builds/missing/download", "/unknown/manifest"} {
 		w := request(t, mux, "GET", apiPrefix+path, "", nil, "")
 		if w.Code != 401 {
@@ -339,9 +360,9 @@ func TestFirmwareAPI(t *testing.T) {
 		method, path, token string
 		status              int
 	}{
-		{"GET", "/x3/manifest", "invalid", 401}, {"GET", "/other/manifest", "reader", 403},
-		{"POST", "/x3/builds", "reader", 403}, {"PUT", "/x3/stable", "reader", 403},
-		{"GET", "/x3/latest", "reader", 404}, {"GET", "/x3/latest?channel=bad", "reader", 422},
+		{"GET", "/x3/manifest", "invalid", 401}, {"GET", "/other/manifest", readerToken, 403},
+		{"POST", "/x3/builds", readerToken, 403}, {"PUT", "/x3/stable", readerToken, 403},
+		{"GET", "/x3/latest", readerToken, 404}, {"GET", "/x3/latest?channel=bad", readerToken, 422},
 	} {
 		w := request(t, mux, test.method, apiPrefix+test.path, test.token, nil, "")
 		if w.Code != test.status {
@@ -350,8 +371,8 @@ func TestFirmwareAPI(t *testing.T) {
 	}
 	body := imageFixture("x4", 5, true)
 	for _, extra := range []bool{true, false} {
-		reader, contentType := uploadBody(t, body, extra)
-		w := request(t, mux, "POST", apiPrefix+"/x3/builds", "publisher", reader, contentType)
+		upload, contentType := uploadBody(t, body, extra)
+		w := request(t, mux, "POST", apiPrefix+"/x3/builds", publisherToken, upload, contentType)
 		if extra {
 			if w.Code != 422 || len(s.Manifest().Builds) != 0 {
 				t.Fatalf("extra part committed: %d", w.Code)
@@ -366,14 +387,14 @@ func TestFirmwareAPI(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if w := request(t, mux, "GET", apiPrefix+"/x3/latest", "reader", nil, ""); w.Code != 404 {
+	if w := request(t, mux, "GET", apiPrefix+"/x3/latest", readerToken, nil, ""); w.Code != 404 {
 		t.Fatal("stable fell back to dev")
 	}
-	w := request(t, mux, "PUT", apiPrefix+"/x3/stable", "publisher", strings.NewReader(`{"build_id":"`+b.ID+`"}`), "application/json")
+	w := request(t, mux, "PUT", apiPrefix+"/x3/stable", publisherToken, strings.NewReader(`{"build_id":"`+b.ID+`"}`), "application/json")
 	if w.Code != 200 {
 		t.Fatalf("promote: %d %s", w.Code, w.Body)
 	}
-	w = request(t, mux, "GET", b.DownloadPath, "reader", nil, "")
+	w = request(t, mux, "GET", b.DownloadPath, readerToken, nil, "")
 	if w.Code != 200 || !bytes.Equal(w.Body.Bytes(), body) || w.Header().Get("Cache-Control") != "private, no-store" || w.Header().Get("Content-Length") != strconv.Itoa(len(body)) {
 		t.Fatal("authenticated download mismatch")
 	}
@@ -381,16 +402,14 @@ func TestFirmwareAPI(t *testing.T) {
 	if w.Code != 401 {
 		t.Fatal("anonymous HEAD bypassed authentication")
 	}
-	w = request(t, mux, "GET", apiPrefix+"/x3/builds/not-a-build/download", "reader", nil, "")
+	w = request(t, mux, "GET", apiPrefix+"/x3/builds/not-a-build/download", readerToken, nil, "")
 	if w.Code != 404 {
 		t.Fatal("unlisted download accepted")
 	}
-	// Revocation takes effect on a freshly mounted handler after configuration reload.
-	access := testAccess()
-	access.Credentials = access.Credentials[1:]
-	revokedMux := http.NewServeMux()
-	(&Handler{Store: s, Access: access}).Mount(revokedMux)
-	if w := request(t, revokedMux, "GET", b.DownloadPath, "reader", nil, ""); w.Code != 401 {
+	if err := registry.Revoke("x3-personal"); err != nil {
+		t.Fatal(err)
+	}
+	if w := request(t, mux, "GET", b.DownloadPath, readerToken, nil, ""); w.Code != 401 {
 		t.Fatal("revoked token accepted")
 	}
 }

@@ -79,8 +79,12 @@ func (d *Dispatcher) Dispatch(ctx context.Context, pageID, componentID string) (
 		}
 	case fabric.ActionRefresh:
 		if page.Data != nil {
-			if invalidator, ok := d.Providers.(interface{ Invalidate(string) }); ok {
-				invalidator.Invalidate(page.Data.Provider)
+			if invalidator, ok := d.Providers.(interface{ InvalidateFor(context.Context, string) }); ok {
+				invalidator.InvalidateFor(ctx, page.Data.Provider)
+			} else {
+				if invalidator, ok := d.Providers.(interface{ Invalidate(string) }); ok {
+					invalidator.Invalidate(page.Data.Provider)
+				}
 			}
 		}
 	default:

@@ -43,10 +43,27 @@ func (r *Registry) Has(name string) bool {
 	return ok
 }
 
-func (r *Registry) Invalidate(name string) {
+func (r *Registry) NodeScoped(name string) bool {
 	r.mu.RLock()
 	provider := r.providers[name]
 	r.mu.RUnlock()
+	if scoped, ok := provider.(interface{ NodeScoped() bool }); ok {
+		return scoped.NodeScoped()
+	}
+	return false
+}
+
+func (r *Registry) Invalidate(name string) {
+	r.InvalidateFor(context.Background(), name)
+}
+func (r *Registry) InvalidateFor(ctx context.Context, name string) {
+	r.mu.RLock()
+	provider := r.providers[name]
+	r.mu.RUnlock()
+	if invalidator, ok := provider.(interface{ InvalidateFor(context.Context) }); ok {
+		invalidator.InvalidateFor(ctx)
+		return
+	}
 	if invalidator, ok := provider.(interface{ Invalidate() }); ok {
 		invalidator.Invalidate()
 	}

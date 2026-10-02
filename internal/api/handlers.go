@@ -7,13 +7,16 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"mime"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/n0remac/Fabric/internal/actions"
+	"github.com/n0remac/Fabric/internal/auth"
 	"github.com/n0remac/Fabric/internal/fabric"
+	"github.com/n0remac/Fabric/internal/nodes"
 	"github.com/n0remac/Fabric/internal/pages"
 	"github.com/n0remac/Fabric/internal/providers"
 	"github.com/n0remac/Fabric/schemas"
@@ -22,16 +25,25 @@ import (
 const maxActionBodyBytes = 16 << 10
 
 type Handler struct {
+	Auth       *auth.Middleware
 	Pages      *pages.Store
 	Providers  *providers.Registry
 	Dispatcher *actions.Dispatcher
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
-	mux.HandleFunc("GET /api/pages", h.listPages)
-	mux.HandleFunc("GET /api/pages/{id}", h.getPage)
-	mux.HandleFunc("GET /api/pages/{id}/data", h.getData)
-	mux.HandleFunc("POST /api/pages/{id}/actions", h.postAction)
+	protect := func(permission string, handler http.HandlerFunc) http.Handler {
+		if h.Auth == nil {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "node authentication is not configured", http.StatusServiceUnavailable)
+			})
+		}
+		return h.Auth.Require(auth.Fixed(permission), handler)
+	}
+	mux.Handle("GET /api/pages", protect("pages.read", h.listPages))
+	mux.Handle("GET /api/pages/{id}", protect("pages.read", h.getPage))
+	mux.Handle("GET /api/pages/{id}/data", protect("pages.read", h.getData))
+	mux.Handle("POST /api/pages/{id}/actions", protect("actions.invoke", h.postAction))
 	mux.HandleFunc("GET /schemas/fabric-page-v0.1.json", serveSchema)
 	mux.HandleFunc("GET /schemas/fabric-page-v0.2.json", serveSchemaV02)
 }
@@ -96,6 +108,15 @@ func (h *Handler) postAction(w http.ResponseWriter, r *http.Request) {
 	if request.ComponentID == "" {
 		writeError(w, http.StatusUnprocessableEntity, "component_required", "component_id is required")
 		return
+	}
+	if node, ok := nodes.FromContext(r.Context()); ok {
+		resource := r.PathValue("id") + "." + request.ComponentID
+		if page, exists := h.Pages.Get(r.PathValue("id")); exists {
+			if component, found := fabric.FindComponent(page.Layout, request.ComponentID); found && component.Action != nil && component.Action.Name != "" {
+				resource = component.Action.Name
+			}
+		}
+		log.Printf("node=%q action=actions.invoke resource=%q outcome=attempt", node.NodeID, resource)
 	}
 	result, err := h.Dispatcher.Dispatch(r.Context(), r.PathValue("id"), request.ComponentID)
 	if err != nil {

@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/n0remac/Fabric/internal/actions"
+	"github.com/n0remac/Fabric/internal/auth"
 	"github.com/n0remac/Fabric/internal/fabric"
+	"github.com/n0remac/Fabric/internal/nodes"
 	"github.com/n0remac/Fabric/internal/pages"
 	"github.com/n0remac/Fabric/internal/providers"
 )
@@ -49,33 +51,45 @@ func TestPageDataAndActionAPIAreSeparated(t *testing.T) {
 		t.Fatal(err)
 	}
 	dispatcher := &actions.Dispatcher{Pages: store, Providers: providerRegistry, Actions: actionRegistry}
+	registry, err := nodes.Open(filepath.Join(t.TempDir(), "nodes.json"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, digest, err := nodes.RandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Add(nodes.Node{ID: "test", Type: "test", Name: "Test", Enabled: true, Permissions: []string{"pages.read", "actions.invoke"}}, digest); err != nil {
+		t.Fatal(err)
+	}
 	mux := http.NewServeMux()
-	(&Handler{Pages: store, Providers: providerRegistry, Dispatcher: dispatcher}).Mount(mux)
+	(&Handler{Auth: &auth.Middleware{Registry: registry}, Pages: store, Providers: providerRegistry, Dispatcher: dispatcher}).Mount(mux)
 
-	pageResponse := request(t, mux, http.MethodGet, "/api/pages/system", "", "")
+	pageResponse := request(t, mux, http.MethodGet, "/api/pages/system", "", "", token)
 	if pageResponse.Code != http.StatusOK || pageResponse.Header().Get("ETag") == "" || !strings.Contains(pageResponse.Body.String(), `"fabric":"0.1"`) {
 		t.Fatalf("unexpected page response: status=%d headers=%v body=%s", pageResponse.Code, pageResponse.Header(), pageResponse.Body.String())
 	}
-	dataResponse := request(t, mux, http.MethodGet, "/api/pages/system/data", "", "")
+	dataResponse := request(t, mux, http.MethodGet, "/api/pages/system/data", "", "", token)
 	if dataResponse.Code != http.StatusOK || !strings.Contains(dataResponse.Body.String(), `"cpu":18`) || strings.Contains(dataResponse.Body.String(), `"fabric"`) {
 		t.Fatalf("unexpected data response: %d %s", dataResponse.Code, dataResponse.Body.String())
 	}
-	actionResponse := request(t, mux, http.MethodPost, "/api/pages/system/actions", `{"component_id":"refresh"}`, "application/json")
+	actionResponse := request(t, mux, http.MethodPost, "/api/pages/system/actions", `{"component_id":"refresh"}`, "application/json", token)
 	if actionResponse.Code != http.StatusOK || !strings.Contains(actionResponse.Body.String(), `"type":"refresh"`) || strings.Contains(actionResponse.Body.String(), `"fabric"`) {
 		t.Fatalf("unexpected action response: %d %s", actionResponse.Code, actionResponse.Body.String())
 	}
-	unknownResponse := request(t, mux, http.MethodPost, "/api/pages/system/actions", `{"component_id":"refresh","name":"untrusted"}`, "application/json")
+	unknownResponse := request(t, mux, http.MethodPost, "/api/pages/system/actions", `{"component_id":"refresh","name":"untrusted"}`, "application/json", token)
 	if unknownResponse.Code != http.StatusBadRequest {
 		t.Fatalf("expected unknown client action field to fail, got %d %s", unknownResponse.Code, unknownResponse.Body.String())
 	}
 }
 
-func request(t *testing.T, handler http.Handler, method, target, body, contentType string) *httptest.ResponseRecorder {
+func request(t *testing.T, handler http.Handler, method, target, body, contentType, token string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(method, target, strings.NewReader(body))
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, req)
 	return response

@@ -4,13 +4,19 @@ Fabric is a Raspberry Pi-hosted service for device-independent declarative inter
 
 ## Run
 
-Fabric requires Go 1.25 or newer.
+Fabric requires Go 1.25 or newer and a node registry. Create a development
+node before starting the service; see [node identity and provisioning](docs/nodes.md).
 
 ```bash
-go run ./cmd/fabricd -addr :8080 -pages ./pages
+mkdir -p .fabric-dev
+go run ./cmd/fabricctl node create --config .fabric-dev/nodes.json \
+  --id dev-browser --type browser --name 'Development Browser' \
+  --output .fabric-dev/browser.token
+FABRIC_NODES_FILE=.fabric-dev/nodes.json go run ./cmd/fabricd -addr :8080 -pages ./pages
 ```
 
-Then open `http://localhost:8080/simulator/system`.
+Then open `http://localhost:8080/simulator/system` and authenticate with the
+token in `.fabric-dev/browser.token`. Keep this directory private; Git ignores it.
 
 Startup prints the server's browser URLs, including its LAN and Tailscale IP addresses when listening on all interfaces. Use one of those URLs to open Fabric from another device.
 
@@ -37,7 +43,7 @@ Clients cannot submit executable code, action names, or action arguments. Only v
 
 Page schemas are served at `/schemas/fabric-page-v0.1.json` and `/schemas/fabric-page-v0.2.json`. Version 0.2 adds `chart` and numeric formats. A chart binds to an array of objects and declares `x` and `y` field names; `y` must be numeric, while `x` must be numeric or an RFC3339 timestamp. The simulator plots these values on a monochrome line chart. The stock pages use 0.2, and existing 0.1 pages remain supported.
 
-Open `/simulator/stocks` for the stock watchlist. Market data is retrieved by `fabricd` from Yahoo Finance's chart endpoint. Quotes are cached for 45 seconds; chart history is cached for 3 or 30 minutes depending on period. When retrieval fails, the provider serves its last successful values with `stale` and `status` fields. The stock detail selection and period are shared process-wide across connected clients in this first version.
+Open `/simulator/stocks` for the stock watchlist. Market data is retrieved by `fabricd` from Yahoo Finance's chart endpoint. Quotes are cached for 45 seconds; chart history is cached for 3 or 30 minutes depending on period. When retrieval fails, the provider serves its last successful values with `stale` and `status` fields. The stock detail selection and period are scoped to each authenticated node while the server runs.
 
 ## Firmware registry
 

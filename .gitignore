@@ -1,4 +1,5 @@
 /fabricd
 /data/
 /deploy/bin/
+/.fabric-dev/
 *.log

@@ -9,14 +9,17 @@ import (
 	"net/http"
 	"strings"
 	"time"
+
+	"github.com/n0remac/Fabric/internal/auth"
+	"github.com/n0remac/Fabric/internal/nodes"
 )
 
 const apiPrefix = "/api/firmware/v1"
 const maxMetadataBytes = 16 << 10
 
 type Handler struct {
-	Store  *Store
-	Access AccessConfig
+	Store *Store
+	Auth  *auth.Middleware
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
@@ -26,32 +29,26 @@ func (h *Handler) Mount(mux *http.ServeMux) {
 	firmwareMux.HandleFunc("GET /api/firmware/v1/{device}/builds/{id}/download", h.download)
 	firmwareMux.HandleFunc("POST /api/firmware/v1/{device}/builds", h.publish)
 	firmwareMux.HandleFunc("PUT /api/firmware/v1/{device}/stable", h.promote)
-	mux.Handle(apiPrefix+"/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", "private, no-store")
-		w.Header().Set("Vary", "Authorization")
-		values := r.Header.Values("Authorization")
-		if len(values) != 1 || !strings.HasPrefix(values[0], "Bearer ") || len(values[0]) > 512 {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="firmware"`)
-			writeError(w, 401, "unauthorized", "firmware credentials are required")
-			return
-		}
-		credential, ok := h.Access.Authenticate(strings.TrimPrefix(values[0], "Bearer "))
-		if !ok {
-			w.Header().Set("WWW-Authenticate", `Bearer realm="firmware"`)
-			writeError(w, 401, "unauthorized", "invalid firmware credentials")
-			return
-		}
+	if h.Auth == nil {
+		mux.HandleFunc(apiPrefix+"/", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "firmware authentication is not configured", http.StatusServiceUnavailable)
+		})
+		return
+	}
+	deviceMux := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		parts := strings.Split(strings.TrimPrefix(r.URL.Path, apiPrefix+"/"), "/")
 		if parts[0] != "x3" {
-			writeError(w, 403, "forbidden", "credential does not authorize this device")
-			return
-		}
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && credential.Role != "publisher" {
-			writeError(w, 403, "forbidden", "publisher credentials are required")
+			writeError(w, 403, "forbidden", "unsupported firmware device")
 			return
 		}
 		firmwareMux.ServeHTTP(w, r)
-	}))
+	})
+	mux.Handle(apiPrefix+"/", h.Auth.Require(func(r *http.Request) (string, string) {
+		if r.Method == http.MethodPost || r.Method == http.MethodPut {
+			return "firmware.publish", r.URL.Path
+		}
+		return "firmware.read", r.URL.Path
+	}, deviceMux))
 }
 
 func (h *Handler) manifest(w http.ResponseWriter, _ *http.Request) {
@@ -59,6 +56,9 @@ func (h *Handler) manifest(w http.ResponseWriter, _ *http.Request) {
 }
 func (h *Handler) latest(w http.ResponseWriter, r *http.Request) {
 	channel := r.URL.Query().Get("channel")
+	if node, ok := nodes.FromContext(r.Context()); ok && node.Node.Attributes["firmware_channel"] != "" {
+		channel = node.Node.Attributes["firmware_channel"]
+	}
 	if channel == "" {
 		channel = "stable"
 	}
@@ -142,7 +142,8 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request) {
 		respondError(w, err)
 		return
 	}
-	log.Printf("firmware published device=x3 build=%s", b.ID)
+	node, _ := nodes.FromContext(r.Context())
+	log.Printf("node=%q action=firmware.publish device=x3 build=%s outcome=success", node.NodeID, b.ID)
 	writeJSON(w, 201, b)
 }
 
@@ -192,7 +193,8 @@ func (h *Handler) promote(w http.ResponseWriter, r *http.Request) {
 		respondError(w, err)
 		return
 	}
-	log.Printf("firmware promoted device=x3 build=%s", b.ID)
+	node, _ := nodes.FromContext(r.Context())
+	log.Printf("node=%q action=firmware.publish device=x3 build=%s promotion=stable outcome=success", node.NodeID, b.ID)
 	writeJSON(w, 200, b)
 }
 

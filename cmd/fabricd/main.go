@@ -18,8 +18,10 @@ import (
 
 	"github.com/n0remac/Fabric/internal/actions"
 	"github.com/n0remac/Fabric/internal/api"
+	"github.com/n0remac/Fabric/internal/auth"
 	"github.com/n0remac/Fabric/internal/fabric"
 	"github.com/n0remac/Fabric/internal/firmware"
+	"github.com/n0remac/Fabric/internal/nodes"
 	"github.com/n0remac/Fabric/internal/pages"
 	"github.com/n0remac/Fabric/internal/providers"
 	"github.com/n0remac/Fabric/internal/simulator"
@@ -38,24 +40,25 @@ func run() error {
 	address := flag.String("addr", envOrDefault("FABRIC_ADDR", ":8080"), "HTTP listen address")
 	pagesDirectory := flag.String("pages", envOrDefault("FABRIC_PAGES_DIR", "pages"), "Fabric Page directory")
 	firmwareDirectory := flag.String("firmware", envOrDefault("FABRIC_FIRMWARE_DIR", ""), "Firmware directory (empty disables firmware)")
-	firmwareAccess := flag.String("firmware-access", envOrDefault("FABRIC_FIRMWARE_ACCESS_FILE", ""), "Firmware credential digest file")
+	nodesFile := flag.String("nodes", envOrDefault("FABRIC_NODES_FILE", ""), "Node registry file (required)")
 	flag.Parse()
+	if *nodesFile == "" {
+		return errors.New("FABRIC_NODES_FILE or -nodes is required")
+	}
+	nodeRegistry, err := nodes.Open(*nodesFile, false)
+	if err != nil {
+		return fmt.Errorf("node registry: %w", err)
+	}
+	identity := &auth.Middleware{Registry: nodeRegistry}
 
 	var firmwareHandler *firmware.Handler
-	if *firmwareDirectory != "" || *firmwareAccess != "" {
-		if *firmwareDirectory == "" || *firmwareAccess == "" {
-			return errors.New("both firmware directory and firmware access file are required")
-		}
-		access, err := firmware.LoadAccess(*firmwareAccess)
-		if err != nil {
-			return fmt.Errorf("firmware access: %w", err)
-		}
+	if *firmwareDirectory != "" {
 		store, err := firmware.NewStore(*firmwareDirectory)
 		if err != nil {
 			return fmt.Errorf("firmware registry: %w", err)
 		}
 		defer store.Close()
-		firmwareHandler = &firmware.Handler{Store: store, Access: access}
+		firmwareHandler = &firmware.Handler{Store: store, Auth: identity}
 	}
 
 	actionRegistry := actions.NewRegistry()
@@ -74,12 +77,12 @@ func run() error {
 	if err := providerRegistry.Register(stockProvider); err != nil {
 		return err
 	}
-	if err := actionRegistry.RegisterResult("stocks.select", func(_ context.Context, args map[string]any) (string, error) {
+	if err := actionRegistry.RegisterResult("stocks.select", func(ctx context.Context, args map[string]any) (string, error) {
 		symbol, ok := args["symbol"].(string)
 		if !ok {
 			return "", errors.New("stock selection requires a symbol")
 		}
-		if err := stockProvider.Select(symbol); err != nil {
+		if err := stockProvider.SelectFor(ctx, symbol); err != nil {
 			return "", err
 		}
 		return "stock-detail", nil
@@ -88,7 +91,7 @@ func run() error {
 	}
 	for _, period := range []providers.Period{providers.Period1D, providers.Period5D, providers.Period1M, providers.Period1Y} {
 		period := period
-		if err := actionRegistry.Register("stocks.period."+string(period), func(_ context.Context, _ map[string]any) error { return stockProvider.SetPeriod(period) }); err != nil {
+		if err := actionRegistry.Register("stocks.period."+string(period), func(ctx context.Context, _ map[string]any) error { return stockProvider.SetPeriodFor(ctx, period) }); err != nil {
 			return err
 		}
 	}
@@ -117,13 +120,13 @@ func run() error {
 	if firmwareHandler != nil {
 		firmwareHandler.Mount(mux)
 	}
-	(&api.Handler{Pages: pageStore, Providers: providerRegistry, Dispatcher: dispatcher}).Mount(mux)
-	(&simulator.Handler{Pages: pageStore, Providers: providerRegistry, Dispatcher: dispatcher, Renderer: renderer}).Mount(mux)
+	(&api.Handler{Auth: identity, Pages: pageStore, Providers: providerRegistry, Dispatcher: dispatcher}).Mount(mux)
+	(&simulator.Handler{Auth: identity, Pages: pageStore, Providers: providerRegistry, Dispatcher: dispatcher, Renderer: renderer}).Mount(mux)
 	websocketHandler := ws.Handler(hub, commandRegistry, ws.Hooks{})
 	if os.Getenv("ENVIRONMENT") != "production" && len(splitList(os.Getenv("WEBSOCKET_ALLOWED_ORIGINS"))) == 0 {
 		websocketHandler = allowSameOriginWebSocket(websocketHandler, websocketConfig.AllowedOrigins[0])
 	}
-	mux.Handle("GET /ws/hub", websocketHandler)
+	mux.Handle("GET /ws/hub", identity.RequireBrowser(auth.Fixed("pages.read"), websocketHandler))
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		_, _ = w.Write([]byte("{\"status\":\"ok\"}\n"))
@@ -136,7 +139,7 @@ func run() error {
 	defer cancel()
 	go hub.Run(ctx)
 	go pageStore.Watch(ctx, time.Second, func(err error) { log.Printf("page reload rejected; retaining last-known-good pages: %v", err) })
-	go simulator.BroadcastChanges(ctx, pageStore, providerRegistry, renderer, hub, stockProvider.Changes())
+	go simulator.BroadcastChanges(ctx, pageStore, providerRegistry, renderer, hub)
 
 	server := &http.Server{
 		Addr:              *address,

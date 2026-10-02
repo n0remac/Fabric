@@ -10,7 +10,9 @@ import (
 	"testing"
 
 	"github.com/n0remac/Fabric/internal/actions"
+	"github.com/n0remac/Fabric/internal/auth"
 	"github.com/n0remac/Fabric/internal/fabric"
+	"github.com/n0remac/Fabric/internal/nodes"
 	"github.com/n0remac/Fabric/internal/pages"
 	"github.com/n0remac/Fabric/internal/providers"
 )
@@ -42,13 +44,25 @@ func TestSimulatorRefreshReturnsOnlyPreviewFragment(t *testing.T) {
 		t.Fatal(err)
 	}
 	dispatcher := &actions.Dispatcher{Pages: store, Providers: providerRegistry, Actions: actionRegistry}
+	registry, err := nodes.Open(filepath.Join(t.TempDir(), "nodes.json"), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, digest, err := nodes.RandomToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.Add(nodes.Node{ID: "browser", Type: "browser", Name: "Browser", Enabled: true, Permissions: []string{"pages.read", "actions.invoke"}}, digest); err != nil {
+		t.Fatal(err)
+	}
 	mux := http.NewServeMux()
-	(&Handler{Pages: store, Providers: providerRegistry, Dispatcher: dispatcher, Renderer: NewGoDomRenderer()}).Mount(mux)
+	(&Handler{Auth: &auth.Middleware{Registry: registry}, Pages: store, Providers: providerRegistry, Dispatcher: dispatcher, Renderer: NewGoDomRenderer()}).Mount(mux)
 
 	form := url.Values{"component_id": {"refresh"}}
 	request := httptest.NewRequest(http.MethodPost, "/simulator/system/actions", strings.NewReader(form.Encode()))
 	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	request.Header.Set("HX-Request", "true")
+	request.Header.Set("Authorization", "Bearer "+token)
 	response := httptest.NewRecorder()
 	mux.ServeHTTP(response, request)
 	if response.Code != http.StatusOK {

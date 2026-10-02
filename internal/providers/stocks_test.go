@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"errors"
+	"github.com/n0remac/Fabric/internal/nodes"
 	"testing"
 	"time"
 )
@@ -12,6 +13,42 @@ type fakeMarket struct {
 	points                   []PricePoint
 	quoteErr, historyErr     error
 	quoteCalls, historyCalls int
+}
+
+func TestStockInteractionIsScopedToAuthenticatedNode(t *testing.T) {
+	market := &fakeMarket{}
+	provider, err := NewStockProvider(market, []string{"NVDA", "VOO"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	x3 := nodes.WithContext(t.Context(), nodes.Node{ID: "x3-pocket", Type: "xteink-x3"}, "session-1")
+	laptop := nodes.WithContext(t.Context(), nodes.Node{ID: "laptop", Type: "desktop"}, "session-1")
+	if err := provider.SelectFor(x3, "NVDA"); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.SetPeriodFor(x3, Period1D); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.SelectFor(laptop, "VOO"); err != nil {
+		t.Fatal(err)
+	}
+	if err := provider.SetPeriodFor(laptop, Period1Y); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		ctx    context.Context
+		symbol string
+		period Period
+	}{{x3, "NVDA", Period1D}, {laptop, "VOO", Period1Y}} {
+		data, err := provider.Data(tc.ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		selected := data["stocks"].(map[string]any)["selected"].(map[string]any)
+		if selected["symbol"] != tc.symbol || selected["period"] != string(tc.period) {
+			t.Fatalf("state crossed node boundary: %+v", selected)
+		}
+	}
 }
 
 func (f *fakeMarket) Quotes(_ context.Context, _ []string) ([]Quote, error) {

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/n0remac/Fabric/internal/actions"
+	"github.com/n0remac/Fabric/internal/auth"
 	"github.com/n0remac/Fabric/internal/fabric"
 	"github.com/n0remac/Fabric/internal/pages"
 	"github.com/n0remac/Fabric/internal/providers"
@@ -14,6 +15,7 @@ import (
 )
 
 type Handler struct {
+	Auth       *auth.Middleware
 	Pages      *pages.Store
 	Providers  *providers.Registry
 	Dispatcher *actions.Dispatcher
@@ -21,10 +23,18 @@ type Handler struct {
 }
 
 func (h *Handler) Mount(mux *http.ServeMux) {
-	mux.HandleFunc("GET /simulator", h.index)
-	mux.HandleFunc("GET /simulator/{id}", h.page)
-	mux.HandleFunc("GET /simulator/{id}/render", h.render)
-	mux.HandleFunc("POST /simulator/{id}/actions", h.action)
+	protect := func(permission string, handler http.HandlerFunc) http.Handler {
+		if h.Auth == nil {
+			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "node authentication is not configured", http.StatusServiceUnavailable)
+			})
+		}
+		return h.Auth.RequireBrowser(auth.Fixed(permission), handler)
+	}
+	mux.Handle("GET /simulator", protect("pages.read", h.index))
+	mux.Handle("GET /simulator/{id}", protect("pages.read", h.page))
+	mux.Handle("GET /simulator/{id}/render", protect("pages.read", h.render))
+	mux.Handle("POST /simulator/{id}/actions", protect("actions.invoke", h.action))
 	mux.Handle("GET /assets/fabric/{path...}", assetHandler())
 }
 
