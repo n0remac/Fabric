@@ -1,3 +1,4 @@
 /fabricd
 /data/
+/deploy/bin/
 *.log

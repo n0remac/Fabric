@@ -39,10 +39,20 @@ Page schemas are served at `/schemas/fabric-page-v0.1.json` and `/schemas/fabric
 
 Open `/simulator/stocks` for the stock watchlist. Market data is retrieved by `fabricd` from Yahoo Finance's chart endpoint. Quotes are cached for 45 seconds; chart history is cached for 3 or 30 minutes depending on period. When retrieval fails, the provider serves its last successful values with `stale` and `status` fields. The stock detail selection and period are shared process-wide across connected clients in this first version.
 
+## Firmware registry
+
+Fabric can store and serve authenticated CrossPoint X3 development and stable
+firmware from a directory registry. See [firmware setup and API](docs/firmware.md)
+for systemd installation on this Pi, credential provisioning, publishing with
+`fabricctl`, and the subsequent device OTA integration.
+
 ## Development checks
 
 ```bash
-go test -race ./...
+go test ./...
 go vet ./...
 go build ./cmd/fabricd
 ```
+
+On this Pi's 16 KiB-page ARM64 kernel, Go's ThreadSanitizer cannot start;
+run `go test -race ./...` on a 4 KiB-page CI runner.

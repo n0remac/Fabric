@@ -19,6 +19,7 @@ import (
 	"github.com/n0remac/Fabric/internal/actions"
 	"github.com/n0remac/Fabric/internal/api"
 	"github.com/n0remac/Fabric/internal/fabric"
+	"github.com/n0remac/Fabric/internal/firmware"
 	"github.com/n0remac/Fabric/internal/pages"
 	"github.com/n0remac/Fabric/internal/providers"
 	"github.com/n0remac/Fabric/internal/simulator"
@@ -36,7 +37,26 @@ func main() {
 func run() error {
 	address := flag.String("addr", envOrDefault("FABRIC_ADDR", ":8080"), "HTTP listen address")
 	pagesDirectory := flag.String("pages", envOrDefault("FABRIC_PAGES_DIR", "pages"), "Fabric Page directory")
+	firmwareDirectory := flag.String("firmware", envOrDefault("FABRIC_FIRMWARE_DIR", ""), "Firmware directory (empty disables firmware)")
+	firmwareAccess := flag.String("firmware-access", envOrDefault("FABRIC_FIRMWARE_ACCESS_FILE", ""), "Firmware credential digest file")
 	flag.Parse()
+
+	var firmwareHandler *firmware.Handler
+	if *firmwareDirectory != "" || *firmwareAccess != "" {
+		if *firmwareDirectory == "" || *firmwareAccess == "" {
+			return errors.New("both firmware directory and firmware access file are required")
+		}
+		access, err := firmware.LoadAccess(*firmwareAccess)
+		if err != nil {
+			return fmt.Errorf("firmware access: %w", err)
+		}
+		store, err := firmware.NewStore(*firmwareDirectory)
+		if err != nil {
+			return fmt.Errorf("firmware registry: %w", err)
+		}
+		defer store.Close()
+		firmwareHandler = &firmware.Handler{Store: store, Access: access}
+	}
 
 	actionRegistry := actions.NewRegistry()
 	providerRegistry := providers.NewRegistry()
@@ -94,6 +114,9 @@ func run() error {
 	commandRegistry := ws.NewRegistry()
 
 	mux := http.NewServeMux()
+	if firmwareHandler != nil {
+		firmwareHandler.Mount(mux)
+	}
 	(&api.Handler{Pages: pageStore, Providers: providerRegistry, Dispatcher: dispatcher}).Mount(mux)
 	(&simulator.Handler{Pages: pageStore, Providers: providerRegistry, Dispatcher: dispatcher, Renderer: renderer}).Mount(mux)
 	websocketHandler := ws.Handler(hub, commandRegistry, ws.Hooks{})

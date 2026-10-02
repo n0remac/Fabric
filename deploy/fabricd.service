@@ -1,0 +1,25 @@
+[Unit]
+Description=Fabric pages and firmware service
+Wants=network-online.target tailscaled.service
+After=network-online.target tailscaled.service
+
+[Service]
+Type=simple
+User=fabric
+Group=fabric
+EnvironmentFile=/etc/fabric/fabric.env
+ExecStart=/usr/local/bin/fabricd
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=15
+StateDirectory=fabric
+StateDirectoryMode=0750
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/fabric
+
+[Install]
+WantedBy=multi-user.target
