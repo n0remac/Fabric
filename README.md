@@ -45,6 +45,18 @@ Page schemas are served at `/schemas/fabric-page-v0.1.json` and `/schemas/fabric
 
 Open `/simulator/stocks` for the stock watchlist. Market data is retrieved by `fabricd` from Yahoo Finance's chart endpoint. Quotes are cached for 45 seconds; chart history is cached for 3 or 30 minutes depending on period. When retrieval fails, the provider serves its last successful values with `stale` and `status` fields. The stock detail selection and period are scoped to each authenticated node while the server runs.
 
+## App bundle manifests (discovery only)
+
+Fabric can optionally validate and discover external app bundles via `FABRIC_APPS_DIR`
+or `fabricd -apps /path/to/apps`. An app folder contains a versioned
+`fabric-app.json` manifest and `main.fabric` source; for an example and
+the proposed scripting contract see [app bundles](docs/apps.md) and
+[ADR-0001](docs/adr/0001-scripting-app-contract.md).
+
+This milestone **does not execute scripts or publish app pages**. The
+existing JSON pages and clients work unchanged. Future milestones will
+interpret scripts and expose validated app pages through the same API.
+
 ## Firmware registry
 
 Fabric can store and serve authenticated CrossPoint X3 development and stable

@@ -1,0 +1,12 @@
+{
+  "fabric_app": "0.1",
+  "id": "homelab",
+  "name": "Homelab Monitor",
+  "entrypoint": "main.fabric",
+  "pages": [
+    "overview"
+  ],
+  "resources": [
+    "homelab.services"
+  ]
+}

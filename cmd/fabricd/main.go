@@ -18,6 +18,7 @@ import (
 
 	"github.com/n0remac/Fabric/internal/actions"
 	"github.com/n0remac/Fabric/internal/api"
+	"github.com/n0remac/Fabric/internal/apps"
 	"github.com/n0remac/Fabric/internal/auth"
 	"github.com/n0remac/Fabric/internal/fabric"
 	"github.com/n0remac/Fabric/internal/firmware"
@@ -39,6 +40,7 @@ func main() {
 func run() error {
 	address := flag.String("addr", envOrDefault("FABRIC_ADDR", ":8080"), "HTTP listen address")
 	pagesDirectory := flag.String("pages", envOrDefault("FABRIC_PAGES_DIR", "pages"), "Fabric Page directory")
+	appsDirectory := flag.String("apps", envOrDefault("FABRIC_APPS_DIR", ""), "Optional Fabric app bundle directory (validation/discovery only)")
 	firmwareDirectory := flag.String("firmware", envOrDefault("FABRIC_FIRMWARE_DIR", ""), "Firmware directory (empty disables firmware)")
 	nodesFile := flag.String("nodes", envOrDefault("FABRIC_NODES_FILE", ""), "Node registry file (required)")
 	flag.Parse()
@@ -102,6 +104,22 @@ func run() error {
 	pageStore, err := pages.NewStore(*pagesDirectory, validator, pages.StockWatchlistTransform(symbols))
 	if err != nil {
 		return err
+	}
+	// Bundles are *discovered*, not executed or registered into page APIs, until
+	// the scripting/runtime integration milestone. This is intentionally opt-in.
+	if *appsDirectory != "" {
+		staticPages := pageStore.List()
+		reservedIDs := make([]string, 0, len(staticPages))
+		for _, page := range staticPages {
+			reservedIDs = append(reservedIDs, page.ID)
+		}
+		catalog, discoveryErr := apps.LoadDirectory(*appsDirectory, reservedIDs)
+		if discoveryErr != nil {
+			log.Printf("Fabric app discovery rejected bundle(s): %v", discoveryErr)
+		}
+		if catalog != nil {
+			log.Printf("Fabric app discovery validated %d bundle(s) (execution disabled until scripting runtime is implemented)", len(catalog.Bundles))
+		}
 	}
 	dispatcher := &actions.Dispatcher{Pages: pageStore, Providers: providerRegistry, Actions: actionRegistry}
 	renderer := simulator.NewGoDomRenderer()

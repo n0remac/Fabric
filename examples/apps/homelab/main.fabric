@@ -1,0 +1,24 @@
+# Illustration of the proposed Starlark host API in ADR-0001.
+# Not executable until the scripting runtime and provider bridge (#4–#8) land.
+def pages():
+    return {
+        "overview": {
+            "title": "Homelab",
+            "refresh": {"strategy": "interval", "seconds": 60},
+            "layout": {
+                "type": "column",
+                "children": [
+                    {"type": "text", "text": "Homelab Services", "style": "heading"},
+                    {"type": "metric", "label": "Online", "bind": "homelab.online"},
+                    {"type": "metric", "label": "Total", "bind": "homelab.total"},
+                    {"type": "button", "id": "refresh", "label": "Refresh", "action": {"type": "refresh"}},
+                ],
+            },
+        },
+    }
+
+
+def data(page_id, resources):
+    services = resources["homelab.services"]["services"]
+    online = len([s for s in services if s["status"] == "running"])
+    return {"homelab": {"online": online, "total": len(services)}}
